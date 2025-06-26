@@ -1,122 +1,121 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Retail Route Tracker</title>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" rel="stylesheet" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grizzly Store Tracker</title>
+  <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
   <style>
-    html, body, #map { height: 100%; margin: 0; padding: 0; }
-    .controls { position: absolute; top: 10px; left: 10px; z-index: 999; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
-    .loading-spinner { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; display: none; }
+    body {
+      font-family: Roboto, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #controls {
+      padding: 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: #fff;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      z-index: 1000;
+    }
+    #map {
+      flex: 1;
+      width: 100%;
+    }
+    select, input, button {
+      font-size: 1rem;
+      padding: 8px;
+    }
+    button {
+      background-color: #26a69a;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
-  <div class="controls">
-    <div class="input-field">
-      <select id="routeSelect"></select>
-      <label>Select Route</label>
-    </div>
-    <div class="input-field">
-      <input type="number" id="startingStock" placeholder="Starting Stock" />
-    </div>
-    <button id="activateRoute" class="btn">Activate Route</button>
-    <p>Total Sold: <span id="totalSold">0</span></p>
-  </div>
-  <div class="loading-spinner preloader-wrapper big active">
-    <div class="spinner-layer spinner-blue-only">
-      <div class="circle-clipper left"><div class="circle"></div></div>
-      <div class="gap-patch"><div class="circle"></div></div>
-      <div class="circle-clipper right"><div class="circle"></div></div>
-    </div>
+  <div id="controls">
+    <select id="routeSelect"></select>
+    <input type="number" id="startingStock" placeholder="Starting Stock">
+    <button onclick="activateRoute()">Activate Route</button>
+    <span id="totalSold">Total Sold: 0</span>
   </div>
   <div id="map"></div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    const API_KEY = 'AIzaSyBBMq7jZrQCFdNsgE63PIsy7o3TH40KCvU';
-    const sheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQTk7sYsT-ZSRumWO6Su7Sqx-lbkxDmrWHCOxz7-hV3jSeYQartAM5WZdRuZZLyuii7YI2CmQiHCjdG/pub?output=csv';
+    let map = L.map('map').setView([-26.2485, 27.8540], 11);
 
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 500);
+
+    const sheetURL = 'https://opensheet.elk.sh/your-sheet-id/Sheet1';
     const routeSelect = document.getElementById('routeSelect');
-    const spinner = document.querySelector('.loading-spinner');
-    M.FormSelect.init(routeSelect);
 
-    let storeData = [];
-    let map = L.map('map').setView([-26.2, 27.9], 11);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    let data = [];
+    let currentRoute = '';
 
-    function showSpinner(show) {
-      spinner.style.display = show ? 'block' : 'none';
-    }
-
-    async function geocodePlusCode(plusCode) {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(plusCode)}&key=${API_KEY}`;
-      const res = await fetch(url);
-      const json = await res.json();
-      if (json.status === 'OK') {
-        return json.results[0].geometry.location;
-      }
-      return null;
-    }
-
-    function initRouteDropdown(data) {
-      const routes = [...new Set(data.map(row => row['Route']))].filter(Boolean);
-      routes.forEach(route => {
-        const opt = document.createElement('option');
-        opt.value = route;
-        opt.textContent = route;
-        routeSelect.appendChild(opt);
+    fetch(sheetURL)
+      .then(response => response.json())
+      .then(json => {
+        data = json;
+        const routes = [...new Set(data.map(entry => entry.Route))].sort();
+        routes.forEach(route => {
+          const opt = document.createElement('option');
+          opt.value = route;
+          opt.textContent = route;
+          routeSelect.appendChild(opt);
+        });
       });
-      M.FormSelect.init(routeSelect);
-    }
 
-    async function loadData() {
-      showSpinner(true);
-      const res = await fetch(sheetURL);
-      const csv = await res.text();
-      const [header, ...rows] = csv.split('\n').map(r => r.split(','));
-      storeData = rows.map(row => Object.fromEntries(row.map((val, i) => [header[i], val])));
-      initRouteDropdown(storeData);
-      showSpinner(false);
-    }
-
-    async function loadRoute(routeName) {
-      map.eachLayer(layer => { if (layer instanceof L.Marker) map.removeLayer(layer); });
-      const filtered = storeData.filter(row => row['Route'] === routeName);
-
-      for (const row of filtered) {
-        const plusCode = row['GPS'];
-        if (!plusCode) continue;
-        const cached = localStorage.getItem(plusCode);
-        let coords;
-        if (cached) {
-          coords = JSON.parse(cached);
-        } else {
-          coords = await geocodePlusCode(plusCode);
-          if (coords) localStorage.setItem(plusCode, JSON.stringify(coords));
-        }
-
-        if (coords) {
-          const marker = L.marker([coords.lat, coords.lng]).addTo(map);
-          const popup = `
-            <strong>${row['Store Name']}</strong><br>
-            ${row['Activity']}<br>
-            ${row['Contact num']}<br>
-            ${row['Store type']}<br>
-            ${row['Notes'] || ''}
-          `;
-          marker.bindPopup(popup);
-        }
-      }
-    }
-
-    document.getElementById('activateRoute').addEventListener('click', () => {
+    function activateRoute() {
       const selectedRoute = routeSelect.value;
-      if (!selectedRoute) return alert('Please select a route');
-      loadRoute(selectedRoute);
-    });
+      const routeData = data.filter(entry => entry.Route === selectedRoute);
+      currentRoute = selectedRoute;
 
-    loadData();
+      map.eachLayer(layer => {
+        if (layer instanceof L.Marker) map.removeLayer(layer);
+      });
+
+      let totalSold = 0;
+
+      routeData.forEach(entry => {
+        const plusCode = entry.GPS?.trim();
+        if (!plusCode) return;
+
+        fetch(`https://plus.codes/api?address=${encodeURIComponent(plusCode)}`)
+          .then(r => r.json())
+          .then(location => {
+            if (location && location.geometry) {
+              const { lat, lng } = location.geometry.location;
+              L.marker([lat, lng]).addTo(map)
+                .bindPopup(
+                  `<strong>${entry['Store Name']}</strong><br>
+                  6p Cash: ${entry.SixpackCash || 0}<br>
+                  6p Credit: ${entry.SixpackCredit || 0}<br>
+                  6p Free: ${entry.SixpackFree || 0}<br>
+                  Singles: ${entry.SingleTaster || 0}<br>
+                  No Sale: ${entry.NoSale || 0}`
+                );
+              totalSold += parseInt(entry.SixpackCash || 0) + parseInt(entry.SixpackCredit || 0) + parseInt(entry.SixpackFree || 0);
+              document.getElementById('totalSold').textContent = `Total Sold: ${totalSold}`;
+            }
+          });
+      });
+    }
   </script>
 </body>
 </html>
