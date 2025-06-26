@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Route Stock Tracker</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body, html { margin:0; padding:0; height:100%; font-family: sans-serif; }
+    #map { height:60%; }
+    #controls { padding:10px; }
+    #graph { width:100%; height:200px; }
+    .popup-form label { display:block; margin:8px 0 4px; }
+    .popup-form input, .popup-form select, .popup-form textarea { width:100%; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <select id="routeSelect"><option value="">Select route</option></select>
+    <button id="activateRoute">Activate route</button>
+    Starting stock <input type="number" id="startStock" min="0" style="width:80px;">
+    Total sold <span id="totalSold">0</span>
+  </div>
+  <div id="map"></div>
+  <canvas id="graph"></canvas>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/idb-keyval@6/dist/esm/index.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
+
+  <script>
+    const SHEET_API = const SHEET_API = 'https://script.google.com/macros/s/AKfycbwYIu5rxYEuvW3LT1WQWMc0N2MeknUVooAbjRQ2mfgTbaPaqdsjzX1JEIWktHYBbcw/exec';;
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_AUTH_DOMAIN",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_STORAGE_BUCKET",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const storage = firebase.storage().ref();
+    const { set, get, update } = idbKeyval;
+
+    let map = L.map('map').setView([-26.27,27.85],13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    let routeLayers = {};
+    let activeRoute = null;
+    let startStock = 0;
+    let soldData = [];
+
+    async function fetchData() {
+      let url = SHEET_API + '?action=getAll';
+      let res = await fetch(url).then(r => r.json());
+      return res;
+    }
+
+    function buildRoutes(data) {
+      const routes = [...new Set(data.map(r=>r.route))];
+      let sel = document.getElementById('routeSelect');
+      routes.forEach(r=> sel.add(new Option(r,r)));
+      data.forEach(store => {
+        let coords = store.Coordinates.split(',').map(Number);
+        let layer = routeLayers[store.route] || L.layerGroup().addTo(map);
+        routeLayers[store.route] = layer;
+        let mk = L.marker(coords).addTo(layer);
+        mk.store = store;
+        mk.on('click', onStoreClick);
+      });
+    }
+
+    function onStoreClick(e) {
+      let s = e.target.store;
+      let lat=s.Coordinates.split(',')[0], lon=s.Coordinates.split(',')[1];
+      let form = document.createElement('div'); form.className='popup-form';
+      form.innerHTML = `
+        <label>Store Name</label><input id=pname value="${s['Store name']}" />
+        <label>Sale Type</label><select id=psale><option>Paid</option><option>Credit</option><option>Free</option></select>
+        <label>Qty Sold</label><input id=pqty type=number min=0 value=0 />
+        <label>Tastes</label><input id=ptaste type=number min=0 value=0 />
+        <label>Contact</label><input id=pcontact value="${s['Contact num']}" />
+        <label>Notes</label><textarea id=pnotes>${s['Notes']||''}</textarea>
+        <label>Photo</label><input id=pphoto type=file accept="image/*" />
+        <button id=psave>Save</button>
+      `;
+      let popup = L.popup().setLatLng([lat,lon]).setContent(form).openOn(map);
+      form.querySelector('#psave').onclick = async ()=>{
+        let updated = {
+          route: s.route,
+          storeId: s['Store name'],
+          saleType: form.querySelector('#psale').value,
+          qty: +form.querySelector('#pqty').value,
+          tastes: +form.querySelector('#ptaste').value,
+          contact: form.querySelector('#pcontact').value,
+          notes: form.querySelector('#pnotes').value
+        };
+        soldData.push(updated.qty);
+        document.getElementById('totalSold').innerText = soldData.reduce((a,b)=>a+b,0);
+        updateChart();
+        let file = form.querySelector('#pphoto').files[0];
+        if(file) {
+          let ref = storage.child(`photos/${s['Store name']}/${Date.now()}`);
+          let snap = await ref.put(file);
+          updated.photoUrl = await snap.ref.getDownloadURL();
+        }
+        await syncToSheet(updated);
+        map.closePopup();
+      };
+    }
+
+    async function syncToSheet(record) {
+      let payload = {action:'save', data:record};
+      if(navigator.onLine) await fetch(SHEET_API,{method:'POST',body:JSON.stringify(payload)});
+      else { await update('pending', arr=>[...(arr||[]),payload]); }
+    }
+
+    async function flushPending() {
+      let p = await get('pending')||[];
+      for(let req of p) await fetch(SHEET_API,{method:'POST',body:JSON.stringify(req)});
+      await set('pending',[]);
+    }
+
+    document.getElementById('activateRoute').onclick = ()=>{
+      activeRoute = document.getElementById('routeSelect').value;
+      startStock = +document.getElementById('startStock').value;
+      soldData = [];
+      updateChart();
+      Object.entries(routeLayers).forEach(([r,layer])=>{
+        if(r===activeRoute) layer.addTo(map); else map.removeLayer(layer);
+      });
+    };
+
+    let chart;
+    function initChart() {
+      let ctx = document.getElementById('graph').getContext('2d');
+      chart = new Chart(ctx, {type:'line', data:{labels:[],datasets:[{label:'Qty Sold',data:[],borderColor:'green'}]}});
+    }
+    function updateChart() {
+      let labels = soldData.map((_,i)=>i+1);
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = soldData;
+      chart.update();
+    }
+
+    window.addEventListener('online',flushPending);
+
+    (async function(){
+      initChart();
+      let data = await fetchData();
+      buildRoutes(data);
+    })();
+  </script>
+</body>
+</html>
