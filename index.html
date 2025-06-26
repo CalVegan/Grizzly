@@ -1,126 +1,122 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Retail Route Tracker</title>
-    <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-      rel="stylesheet"
-    />
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
-    <style>
-      html, body, #map { height: 100%; margin: 0; padding: 0; }
-      .loader {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 1.5rem;
-      }
-      .control-panel {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        z-index: 1000;
-        background: white;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-      }
-    </style>
-  </head>
-  <body>
-    <div class="control-panel">
-      <div class="input-field">
-        <select id="routeSelect"></select>
-        <label>Select Route</label>
-      </div>
-      <div class="input-field">
-        <input type="number" id="startingStock" />
-        <label for="startingStock">Starting Stock</label>
-      </div>
-      <a class="waves-effect waves-light btn" id="activateRoute">Activate Route</a>
-      <div>Total Sold: <span id="totalSold">0</span></div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Retail Route Tracker</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" rel="stylesheet" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    .controls { position: absolute; top: 10px; left: 10px; z-index: 999; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+    .loading-spinner { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; display: none; }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <div class="input-field">
+      <select id="routeSelect"></select>
+      <label>Select Route</label>
     </div>
-    <div class="loader" id="loader">Loading map and data...</div>
-    <div id="map"></div>
+    <div class="input-field">
+      <input type="number" id="startingStock" placeholder="Starting Stock" />
+    </div>
+    <button id="activateRoute" class="btn">Activate Route</button>
+    <p>Total Sold: <span id="totalSold">0</span></p>
+  </div>
+  <div class="loading-spinner preloader-wrapper big active">
+    <div class="spinner-layer spinner-blue-only">
+      <div class="circle-clipper left"><div class="circle"></div></div>
+      <div class="gap-patch"><div class="circle"></div></div>
+      <div class="circle-clipper right"><div class="circle"></div></div>
+    </div>
+  </div>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+  <script>
+    const API_KEY = 'AIzaSyBBMq7jZrQCFdNsgE63PIsy7o3TH40KCvU';
+    const sheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQTk7sYsT-ZSRumWO6Su7Sqx-lbkxDmrWHCOxz7-hV3jSeYQartAM5WZdRuZZLyuii7YI2CmQiHCjdG/pub?output=csv';
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script>
-      const apiKey = "AIzaSyBBMq7jZrQCFdNsgE63PIsy7o3TH40KCvU";
-      const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQTk7sYsT-ZSRumWO6Su7Sqx-lbkxDmrWHCOxz7-hV3jSeYQartAM5WZdRuZZLyuii7YI2CmQiHCjdG/pub?output=csv";
+    const routeSelect = document.getElementById('routeSelect');
+    const spinner = document.querySelector('.loading-spinner');
+    M.FormSelect.init(routeSelect);
 
-      let map = L.map("map").setView([-26.2, 27.9], 11);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "Map data © OpenStreetMap contributors"
-      }).addTo(map);
+    let storeData = [];
+    let map = L.map('map').setView([-26.2, 27.9], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-      let allData = [],
-        totalSold = 0;
+    function showSpinner(show) {
+      spinner.style.display = show ? 'block' : 'none';
+    }
 
-      document.addEventListener("DOMContentLoaded", function () {
-        M.AutoInit();
-
-        fetch(sheetUrl)
-          .then((res) => res.text())
-          .then((csvText) => {
-            const rows = csvText.split("\n").map((r) => r.split(","));
-            const headers = rows[0];
-            allData = rows.slice(1).map((row) => {
-              const entry = {};
-              headers.forEach((h, i) => (entry[h.trim()] = row[i]?.trim()));
-              return entry;
-            });
-            populateRoutes();
-            document.getElementById("loader").style.display = "none";
-          });
-
-        document.getElementById("activateRoute").addEventListener("click", activateRoute);
-      });
-
-      function populateRoutes() {
-        const routeSelect = document.getElementById("routeSelect");
-        const routes = [...new Set(allData.map((d) => d["Route"]))];
-        routes.forEach((route) => {
-          const option = document.createElement("option");
-          option.value = route;
-          option.textContent = route;
-          routeSelect.appendChild(option);
-        });
-        M.FormSelect.init(routeSelect);
+    async function geocodePlusCode(plusCode) {
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(plusCode)}&key=${API_KEY}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.status === 'OK') {
+        return json.results[0].geometry.location;
       }
+      return null;
+    }
 
-      async function activateRoute() {
-        map.eachLayer((layer) => {
-          if (layer instanceof L.Marker) map.removeLayer(layer);
-        });
+    function initRouteDropdown(data) {
+      const routes = [...new Set(data.map(row => row['Route']))].filter(Boolean);
+      routes.forEach(route => {
+        const opt = document.createElement('option');
+        opt.value = route;
+        opt.textContent = route;
+        routeSelect.appendChild(opt);
+      });
+      M.FormSelect.init(routeSelect);
+    }
 
-        const selectedRoute = document.getElementById("routeSelect").value;
-        const filtered = allData.filter((d) => d["Route"] === selectedRoute);
-        for (const row of filtered) {
-          try {
-            const locationStr = encodeURIComponent(row["GPS"] + ", Soweto");
-            const res = await fetch(
-              `https://maps.googleapis.com/maps/api/geocode/json?address=${locationStr}&key=${apiKey}`
-            );
-            const json = await res.json();
-            const coords = json.results[0]?.geometry?.location;
-            if (!coords) continue;
+    async function loadData() {
+      showSpinner(true);
+      const res = await fetch(sheetURL);
+      const csv = await res.text();
+      const [header, ...rows] = csv.split('\n').map(r => r.split(','));
+      storeData = rows.map(row => Object.fromEntries(row.map((val, i) => [header[i], val])));
+      initRouteDropdown(storeData);
+      showSpinner(false);
+    }
 
-            const marker = L.marker([coords.lat, coords.lng]).addTo(map);
-            marker.bindPopup(
-              `<strong>${row["Store Name"]}</strong><br />Activity: ${row["Activity"]}<br />Contact: ${row["Contact nu"]}<br />Notes: ${row["Notes"]}`
-            );
-          } catch (e) {
-            console.error("Geocoding failed for:", row["GPS"]);
-          }
+    async function loadRoute(routeName) {
+      map.eachLayer(layer => { if (layer instanceof L.Marker) map.removeLayer(layer); });
+      const filtered = storeData.filter(row => row['Route'] === routeName);
+
+      for (const row of filtered) {
+        const plusCode = row['GPS'];
+        if (!plusCode) continue;
+        const cached = localStorage.getItem(plusCode);
+        let coords;
+        if (cached) {
+          coords = JSON.parse(cached);
+        } else {
+          coords = await geocodePlusCode(plusCode);
+          if (coords) localStorage.setItem(plusCode, JSON.stringify(coords));
+        }
+
+        if (coords) {
+          const marker = L.marker([coords.lat, coords.lng]).addTo(map);
+          const popup = `
+            <strong>${row['Store Name']}</strong><br>
+            ${row['Activity']}<br>
+            ${row['Contact num']}<br>
+            ${row['Store type']}<br>
+            ${row['Notes'] || ''}
+          `;
+          marker.bindPopup(popup);
         }
       }
-    </script>
-  </body>
+    }
+
+    document.getElementById('activateRoute').addEventListener('click', () => {
+      const selectedRoute = routeSelect.value;
+      if (!selectedRoute) return alert('Please select a route');
+      loadRoute(selectedRoute);
+    });
+
+    loadData();
+  </script>
+</body>
 </html>
