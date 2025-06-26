@@ -1,130 +1,126 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Retail Route Tracker</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
-  <style>
-    html, body, #map {
-      height: 100%; margin: 0; padding: 0;
-    }
-    .map-container {
-      height: 90vh;
-    }
-    .controls {
-      margin: 10px;
-    }
-    .store-popup input, .store-popup select, .store-popup textarea {
-      width: 100%; margin-top: 5px;
-    }
-  </style>
-</head>
-<body>
-  <div class="controls center-align">
-    <div class="input-field inline">
-      <select id="routeSelect"></select>
-      <label for="routeSelect">Select Route</label>
-    </div>
-    <div class="input-field inline">
-      <input id="stockInput" type="number" />
-      <label for="stockInput">Starting Stock</label>
-    </div>
-    <button class="btn waves-effect" onclick="activateRoute()">Activate Route</button>
-    <span>Total Sold: <span id="totalSold">0</span></span>
-  </div>
-  <div id="map" class="map-container"></div>
-
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
-  <script>
-    const sheetUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQTk7sYsT-ZSRumWO6Su7Sqx-lbkxDmrWHCOxz7-hV3jSeYQartAM5WZdRuZZLyuii7YI2CmQiHCjdG/pub?output=csv';
-    const geocodeKey = 'AIzaSyBBMq7jZrQCFdNsgE63PIsy7o3TH40KCvU';
-    let map, totalSold = 0, currentRoute = '', storeData = [];
-
-    document.addEventListener('DOMContentLoaded', function () {
-      M.AutoInit();
-      fetch(sheetUrl)
-        .then(res => res.text())
-        .then(csv => Papa.parse(csv, { header: true }).data)
-        .then(data => {
-          storeData = data;
-          initMap();
-          populateRoutes(data);
-        });
-    });
-
-    function initMap() {
-      map = L.map('map').setView([-26.27, 27.85], 13);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: 'Map data © OpenStreetMap contributors'
-      }).addTo(map);
-    }
-
-    function populateRoutes(data) {
-      const routeSelect = document.getElementById('routeSelect');
-      const routes = [...new Set(data.map(row => row['Route']))];
-      routes.forEach(route => {
-        const option = document.createElement('option');
-        option.value = route;
-        option.text = route;
-        routeSelect.appendChild(option);
-      });
-      M.FormSelect.init(routeSelect);
-    }
-
-    function activateRoute() {
-      currentRoute = document.getElementById('routeSelect').value;
-      const stockInput = document.getElementById('stockInput').value;
-      totalSold = 0;
-      document.getElementById('totalSold').innerText = totalSold;
-      map.eachLayer(layer => layer instanceof L.Marker && map.removeLayer(layer));
-
-      const filtered = storeData.filter(row => row['Route'] === currentRoute);
-      filtered.forEach(async row => {
-        const plusCode = row['GPS'];
-        const coords = await plusCodeToLatLng(plusCode);
-        if (!coords) return;
-
-        const marker = L.marker(coords).addTo(map);
-        const popup = `
-          <div class="store-popup">
-            <strong>${row['Store Name']}</strong><br />
-            <label>Activity</label><input type="text" value="${row['Activity']}" /><br />
-            <label>Contact</label><input type="text" value="${row['Contact nu']}" /><br />
-            <label>Notes</label><textarea>${row['Notes'] || ''}</textarea><br />
-            <label>Qty Sold</label><input type="number" onchange="updateSold(this.value)" /><br />
-            <a target="_blank" href="https://www.google.com/maps/search/?api=1&query=${coords[0]},${coords[1]}">Navigate</a>
-          </div>`;
-        marker.bindPopup(popup);
-      });
-    }
-
-    async function plusCodeToLatLng(plusCode) {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(plusCode)}&key=${geocodeKey}`;
-      try {
-        const res = await fetch(url);
-        const json = await res.json();
-        if (json.status === 'OK') {
-          const loc = json.results[0].geometry.location;
-          return [loc.lat, loc.lng];
-        } else {
-          console.warn('Geocode failed for:', plusCode);
-          return null;
-        }
-      } catch (err) {
-        console.error('Error in geocoding:', err);
-        return null;
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Retail Route Tracker</title>
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <style>
+      html, body, #map { height: 100%; margin: 0; padding: 0; }
+      .loader {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 1.5rem;
       }
-    }
+      .control-panel {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 1000;
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="control-panel">
+      <div class="input-field">
+        <select id="routeSelect"></select>
+        <label>Select Route</label>
+      </div>
+      <div class="input-field">
+        <input type="number" id="startingStock" />
+        <label for="startingStock">Starting Stock</label>
+      </div>
+      <a class="waves-effect waves-light btn" id="activateRoute">Activate Route</a>
+      <div>Total Sold: <span id="totalSold">0</span></div>
+    </div>
+    <div class="loader" id="loader">Loading map and data...</div>
+    <div id="map"></div>
 
-    function updateSold(value) {
-      totalSold += parseInt(value || 0);
-      document.getElementById('totalSold').innerText = totalSold;
-    }
-  </script>
-</body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+      const apiKey = "AIzaSyBBMq7jZrQCFdNsgE63PIsy7o3TH40KCvU";
+      const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQTk7sYsT-ZSRumWO6Su7Sqx-lbkxDmrWHCOxz7-hV3jSeYQartAM5WZdRuZZLyuii7YI2CmQiHCjdG/pub?output=csv";
+
+      let map = L.map("map").setView([-26.2, 27.9], 11);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "Map data © OpenStreetMap contributors"
+      }).addTo(map);
+
+      let allData = [],
+        totalSold = 0;
+
+      document.addEventListener("DOMContentLoaded", function () {
+        M.AutoInit();
+
+        fetch(sheetUrl)
+          .then((res) => res.text())
+          .then((csvText) => {
+            const rows = csvText.split("\n").map((r) => r.split(","));
+            const headers = rows[0];
+            allData = rows.slice(1).map((row) => {
+              const entry = {};
+              headers.forEach((h, i) => (entry[h.trim()] = row[i]?.trim()));
+              return entry;
+            });
+            populateRoutes();
+            document.getElementById("loader").style.display = "none";
+          });
+
+        document.getElementById("activateRoute").addEventListener("click", activateRoute);
+      });
+
+      function populateRoutes() {
+        const routeSelect = document.getElementById("routeSelect");
+        const routes = [...new Set(allData.map((d) => d["Route"]))];
+        routes.forEach((route) => {
+          const option = document.createElement("option");
+          option.value = route;
+          option.textContent = route;
+          routeSelect.appendChild(option);
+        });
+        M.FormSelect.init(routeSelect);
+      }
+
+      async function activateRoute() {
+        map.eachLayer((layer) => {
+          if (layer instanceof L.Marker) map.removeLayer(layer);
+        });
+
+        const selectedRoute = document.getElementById("routeSelect").value;
+        const filtered = allData.filter((d) => d["Route"] === selectedRoute);
+        for (const row of filtered) {
+          try {
+            const locationStr = encodeURIComponent(row["GPS"] + ", Soweto");
+            const res = await fetch(
+              `https://maps.googleapis.com/maps/api/geocode/json?address=${locationStr}&key=${apiKey}`
+            );
+            const json = await res.json();
+            const coords = json.results[0]?.geometry?.location;
+            if (!coords) continue;
+
+            const marker = L.marker([coords.lat, coords.lng]).addTo(map);
+            marker.bindPopup(
+              `<strong>${row["Store Name"]}</strong><br />Activity: ${row["Activity"]}<br />Contact: ${row["Contact nu"]}<br />Notes: ${row["Notes"]}`
+            );
+          } catch (e) {
+            console.error("Geocoding failed for:", row["GPS"]);
+          }
+        }
+      }
+    </script>
+  </body>
 </html>
